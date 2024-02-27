@@ -6,6 +6,22 @@ from torch.utils.data import Dataset
 
 from aug.augmentation import *
 
+def imread(p, h, w, is_mask=False, in_inverse_mask=False, img=None):
+    if img is None:
+        img = cv.imread(p)
+    if not is_mask:
+        img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+        img = cv.resize(img, (w,h))
+        img = (img.astype(np.float32) / 127.5) - 1.0  # [-1, 1]
+    else:
+        img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        img = cv.resize(img, (w,h))
+        img = (img >= 128).astype(np.float32)  # 0 or 1
+        img = img[:,:,None]
+        if in_inverse_mask:
+            img = 1-img
+    return img
+
 def image_int_to_float(img, is_mask=False, invert_mask=False):
     if is_mask:
         img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
@@ -16,8 +32,9 @@ def image_int_to_float(img, is_mask=False, invert_mask=False):
     else:
         img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
         img = (img.astype(np.float32) / 127.5) - 1.0
-    return img   
-class VITONHDDataset(Dataset):
+    return img
+
+class VITONHDDataset_aug(Dataset):
     def __init__(
             self, 
             data_root_dir, 
@@ -59,7 +76,7 @@ class VITONHDDataset(Dataset):
         cloth_fn = self.c_names[self.pair_key][idx]
 
         agn = cv.imread(opj(self.drd, self.data_type, "agnostic-v3.2", self.im_names[idx]))
-        agn_mask = cv.imread(opj(self.drd, self.data_type, "agnostic-mask", self.im_names[idx].replace(".jpg", "_mask.png")))
+        agn_mask = cv.imread(opj(self.drd, self.data_type, "agnostic-mask", self.im_names[idx]))
 
         cloth = cv.imread(opj(self.drd, self.data_type, "cloth", self.c_names[self.pair_key][idx]))
 
@@ -68,6 +85,17 @@ class VITONHDDataset(Dataset):
 
         agn, agn_mask, cloth, image, image_densepose =\
             map(lambda img: cv.resize(img, (self.img_W, self.img_H)), [agn, agn_mask, cloth, image, image_densepose])
+        
+        if not self.is_test: # train
+            aug = transform_flip(image=cloth , agn=agn, agn_mask=agn_mask, image_densepose=image_densepose)
+            cloth, agn, agn_mask, image_densepose = \
+                aug['image'], aug['agn'], aug['agn_mask'], aug['image_densepose']
+            
+            aug = transform_shift_scale(image=image, cloth=cloth)
+            cloth, image = aug['cloth'], aug['image']
+
+            aug = transform_color(image=image, cloth=cloth)
+            cloth, image = aug['cloth'], aug['image']
         
         agn, cloth, image, image_densepose = \
             map(image_int_to_float, [agn, cloth, image, image_densepose])
